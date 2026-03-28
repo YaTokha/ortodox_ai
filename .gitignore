@@ -18,3 +18,13 @@ checkpoints/
 *.safetensors
 *.ckpt
 wandb/
+
+# IDE
+.idea/
+
+# Generated corpora and training artifacts
+data/raw/bible/*.txt
+data/raw/commentaries/*.txt
+data/raw/sermons/*.txt
+data/processed/*.jsonl
+data/processed/*.parquet

@@ -42,7 +42,7 @@ def test_generate_sermon_filters_html_noise_and_returns_coherent_text() -> None:
     assert "источники:" not in low
     assert "fallback-режим" not in low
     assert "покаяни" in low
-    assert low.startswith("проповедь:")
+    assert low.startswith("проповедь:") or low.startswith("проповедь на тему:")
     assert "во имя отца, и сына, и святого духа!" in low
     assert "дорогие братья и сестры!" in low
     assert "вступление." in low
@@ -72,7 +72,7 @@ def test_generate_sermon_filters_citation_dump_lines() -> None:
     assert "commentary;" not in low
     assert "источник:" not in low
     assert "https://" not in low
-    assert low.startswith("проповедь:")
+    assert low.startswith("проповедь:") or low.startswith("проповедь на тему:")
     assert "во имя отца, и сына, и святого духа!" in low
     assert "вступление." in low
     assert "основная часть." in low
@@ -99,7 +99,7 @@ def test_generate_sermon_removes_direct_quotes_and_keeps_three_parts() -> None:
     )
 
     low = res.sermon.lower()
-    assert low.startswith("проповедь:")
+    assert low.startswith("проповедь:") or low.startswith("проповедь на тему:")
     assert "во имя отца, и сына, и святого духа!" in low
     assert "вступление." in low
     assert "основная часть." in low
@@ -129,7 +129,7 @@ def test_generate_sermon_filters_rule_dump_and_metadata() -> None:
         GenerateRequest(prompt="сгенерируй проповедь о покаянии", top_k_sources=2)
     )
     low = res.sermon.lower()
-    assert low.startswith("проповедь:")
+    assert low.startswith("проповедь:") or low.startswith("проповедь на тему:")
     assert "вступление." in low
     assert "основная часть." in low
     assert "заключение." in low

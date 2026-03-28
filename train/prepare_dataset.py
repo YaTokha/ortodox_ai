@@ -19,6 +19,7 @@ import argparse
 import json
 import random
 import re
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -157,6 +158,133 @@ def split_dataset(rows: List[dict], seed: int = 42) -> Tuple[List[dict], List[di
     return train, valid, test
 
 
+def deduplicate_rows(rows: List[dict]) -> List[dict]:
+    seen = set()
+    out: List[dict] = []
+    for row in rows:
+        key = normalize(row["text"]).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def parse_ratio_spec(spec: str) -> Dict[str, float]:
+    """
+    Формат:
+      "bible=0.2,commentary=0.35,sermon=0.45"
+    """
+    mapping: Dict[str, str] = {
+        "bible": "bible",
+        "commentary": "commentary",
+        "commentaries": "commentary",
+        "sermon": "sermon",
+        "sermons": "sermon",
+    }
+    out: Dict[str, float] = {}
+    for chunk in (spec or "").split(","):
+        part = chunk.strip()
+        if not part or "=" not in part:
+            continue
+        raw_k, raw_v = part.split("=", 1)
+        k = mapping.get(raw_k.strip().lower())
+        if not k:
+            continue
+        try:
+            v = float(raw_v.strip())
+        except ValueError:
+            continue
+        if v > 0:
+            out[k] = v
+    return out
+
+
+def count_by_source(rows: List[dict]) -> Dict[str, int]:
+    stats: Dict[str, int] = {}
+    for row in rows:
+        src = row.get("source_type", "unknown")
+        stats[src] = stats.get(src, 0) + 1
+    return stats
+
+
+def rebalance_rows(
+    rows: List[dict],
+    ratio_spec: str,
+    seed: int = 42,
+    max_total_rows: int = 0,
+) -> List[dict]:
+    if not rows:
+        return rows
+
+    groups: Dict[str, List[dict]] = {}
+    for row in rows:
+        groups.setdefault(row["source_type"], []).append(row)
+    source_types = sorted(groups.keys())
+    if len(source_types) <= 1:
+        return rows
+
+    desired = parse_ratio_spec(ratio_spec)
+    if not desired:
+        desired = {"bible": 0.25, "commentary": 0.35, "sermon": 0.40}
+
+    # Нормализуем доли под реально присутствующие типы источников.
+    weights: Dict[str, float] = {}
+    known_sum = 0.0
+    unknown_types = []
+    for src in source_types:
+        if src in desired:
+            w = max(0.0, desired[src])
+            weights[src] = w
+            known_sum += w
+        else:
+            unknown_types.append(src)
+
+    remaining = max(0.0, 1.0 - known_sum)
+    if unknown_types:
+        fill = remaining / len(unknown_types) if remaining > 0 else 1.0 / len(source_types)
+        for src in unknown_types:
+            weights[src] = fill
+
+    total_w = sum(weights.values())
+    if total_w <= 0:
+        eq = 1.0 / len(source_types)
+        for src in source_types:
+            weights[src] = eq
+    else:
+        for src in source_types:
+            weights[src] = weights[src] / total_w
+
+    target_total = max_total_rows if max_total_rows > 0 else len(rows)
+    float_targets = {src: target_total * weights[src] for src in source_types}
+    target_counts = {src: int(math.floor(v)) for src, v in float_targets.items()}
+    remainder = target_total - sum(target_counts.values())
+    if remainder > 0:
+        fractions = sorted(
+            source_types,
+            key=lambda src: float_targets[src] - target_counts[src],
+            reverse=True,
+        )
+        for src in fractions[:remainder]:
+            target_counts[src] += 1
+
+    rnd = random.Random(seed)
+    balanced: List[dict] = []
+    for src in source_types:
+        items = groups[src]
+        target = target_counts[src]
+        if target <= 0:
+            continue
+        if len(items) >= target:
+            balanced.extend(rnd.sample(items, target))
+        else:
+            balanced.extend(items)
+            balanced.extend(rnd.choice(items) for _ in range(target - len(items)))
+
+    rnd.shuffle(balanced)
+    return balanced
+
+
 def write_jsonl(path: Path, rows: List[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -174,6 +302,12 @@ def main() -> None:
     parser.add_argument("--min-chars", type=int, default=80)
     parser.add_argument("--max-chars", type=int, default=1200)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--deduplicate", dest="deduplicate", action="store_true")
+    parser.add_argument("--no-deduplicate", dest="deduplicate", action="store_false")
+    parser.set_defaults(deduplicate=True)
+    parser.add_argument("--balance-source-types", action="store_true")
+    parser.add_argument("--target-ratios", default="bible=0.25,commentary=0.35,sermon=0.40")
+    parser.add_argument("--max-total-rows", type=int, default=0)
     args = parser.parse_args()
 
     raw_root = Path(args.raw_root)
@@ -201,6 +335,18 @@ def main() -> None:
     if not rows:
         raise SystemExit("Корпус пуст. Добавьте txt-файлы в data/raw/*")
 
+    initial_count = len(rows)
+    if args.deduplicate:
+        rows = deduplicate_rows(rows)
+
+    if args.balance_source_types:
+        rows = rebalance_rows(
+            rows,
+            ratio_spec=args.target_ratios,
+            seed=args.seed,
+            max_total_rows=args.max_total_rows,
+        )
+
     train_rows, valid_rows, test_rows = split_dataset(rows, seed=args.seed)
 
     write_jsonl(Path(args.out_corpus), rows)
@@ -208,7 +354,9 @@ def main() -> None:
     write_jsonl(Path(args.out_valid), valid_rows)
     write_jsonl(Path(args.out_test), test_rows)
 
-    print(f"Всего примеров: {len(rows)}")
+    print(f"Всего примеров (до фильтрации): {initial_count}")
+    print(f"Всего примеров (финально): {len(rows)}")
+    print(f"Распределение по типам: {count_by_source(rows)}")
     print(f"Train/Valid/Test: {len(train_rows)}/{len(valid_rows)}/{len(test_rows)}")
     print(f"Корпус сохранен: {args.out_corpus}")
 

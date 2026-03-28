@@ -31,6 +31,7 @@ docs/
   TECHNICAL_SPEC.md      # ТЗ
   FUNCTIONAL_REQUIREMENTS.md
   REMOTE_TRAINING.md
+  LARGE_DATASET_PIPELINE.md
 scripts/
   ingest_real_corpus.py
   setup_server.sh
@@ -71,8 +72,18 @@ python -m train.prepare_dataset --raw-root data/raw
 Если хотите автоматически собрать «реальный» корпус из вашего локального архива Библии + православных источников RoyalLib:
 
 ```bash
-python scripts/ingest_real_corpus.py
-python -m train.prepare_dataset --raw-root data/raw
+cp data/source_import/remote_sources.example.csv data/source_import/remote_sources.csv
+# Добавьте в CSV дополнительные источники (чем больше, тем лучше).
+python scripts/ingest_real_corpus.py --manifest data/source_import/remote_sources.csv --continue-on-error
+
+# Опционально: положите дополнительные .txt/.zip в data/source_import/manual/** (sermons/commentaries/bible)
+# и повторно запустите ingest_real_corpus.py
+
+python -m train.prepare_dataset --raw-root data/raw \
+  --deduplicate \
+  --balance-source-types \
+  --target-ratios "bible=0.20,commentary=0.35,sermon=0.45" \
+  --max-total-rows 30000
 ```
 
 4. Запустите веб-сервис:
@@ -102,6 +113,7 @@ accelerate launch train/train_lora.py \
 ### Вариант B: удалённый сервер (рекомендуется)
 Смотрите подробный гайд: `docs/REMOTE_TRAINING.md`.
 Бюджетные варианты и точные команды: `docs/BUDGET_GPU_SERVER_2026-03-28.md`.
+Пошагово для Google Colab: `docs/COLAB_TRAINING.md`.
 
 Кратко:
 
@@ -144,6 +156,13 @@ python main.py
 ```
 
 Если `prompt` заполнен, генерация выполняется в первую очередь по нему.
+
+## Расширение корпуса
+
+- Основной способ: `data/source_import/remote_sources.csv` (CSV manifest источников).
+- Локальный импорт: `data/source_import/manual/sermons`, `.../commentaries`, `.../bible`.
+- Поддерживаются `.txt` и `.zip`.
+- При большом корпусе включайте балансировку в `prepare_dataset.py`, чтобы стиль проповеди не «растворялся» в библейском корпусе.
 
 ## Важные замечания
 

@@ -87,8 +87,9 @@ class SermonGenerator:
             or getattr(self.model.config, "max_position_embeddings", 1024)
             or 1024
         )
-        # Всегда резервируем место под генерацию, чтобы не выйти за длину контекста.
-        reserve_for_generation = min(max_new_tokens, 96)
+        # Резервируем под генерацию столько, сколько реально запросили (в пределах контекста модели).
+        # Иначе при слишком маленьком резерве модель обрезается до коротких ответов.
+        reserve_for_generation = min(max_new_tokens, max(32, model_ctx - 64))
         max_input_len = max(64, model_ctx - reserve_for_generation)
 
         prev_trunc_side = getattr(self.tokenizer, "truncation_side", "right")
@@ -97,7 +98,7 @@ class SermonGenerator:
         self.tokenizer.truncation_side = prev_trunc_side
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         input_len = int(inputs["input_ids"].shape[1])
-        allowed_new_tokens = max(16, min(max_new_tokens, model_ctx - input_len - 1))
+        allowed_new_tokens = max(32, min(max_new_tokens, model_ctx - input_len - 1))
 
         with torch.no_grad():
             out = self.model.generate(

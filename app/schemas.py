@@ -35,9 +35,9 @@ class GenerateRequest(BaseModel):
     style: str = Field(default="пастырский", max_length=100)
 
     max_new_tokens: int = Field(default=520, ge=120, le=900)
-    temperature: float = Field(default=0.95, ge=0.1, le=1.5)
-    top_p: float = Field(default=0.97, ge=0.2, le=1.0)
-    repetition_penalty: float = Field(default=1.05, ge=1.0, le=2.0)
+    temperature: float = Field(default=0.78, ge=0.1, le=1.5)
+    top_p: float = Field(default=0.92, ge=0.2, le=1.0)
+    repetition_penalty: float = Field(default=1.12, ge=1.0, le=2.0)
     top_k_sources: int = Field(default=5, ge=1, le=10)
 
     @model_validator(mode="after")
