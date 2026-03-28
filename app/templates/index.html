@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Православный Интеллектуальный Ассистент</title>
+  <link rel="stylesheet" href="/static/style.css?v=20260328-4" />
+</head>
+<body>
+  <header class="hero">
+    <h1>Православный Интеллектуальный Ассистент</h1>
+    <p>Генерация православных проповедей на основе корпуса Священного Писания и святоотеческой традиции (прототип ВКР)</p>
+  </header>
+
+  <main class="container">
+    <section class="card wide">
+      <h2>Генерация проповеди</h2>
+      <textarea id="prompt" placeholder="Промт для генерации (приоритетный режим). Пример: Подготовь проповедь о покаянии для молодежной аудитории на основе Лк. 15:11-32."></textarea>
+      <p class="note">Если поле «Промт для генерации» заполнено, генерация выполняется по нему.</p>
+      <input id="topic" type="text" placeholder="Тема проповеди" />
+      <input id="occasion" type="text" placeholder="Праздник / повод (необязательно)" />
+      <input id="audience" type="text" value="приход" placeholder="Аудитория" />
+      <textarea id="bibleText" placeholder="Библейский фрагмент (необязательно)"></textarea>
+
+      <div class="row">
+        <label>Temperature <input id="temperature" type="number" step="0.01" value="0.95" /></label>
+        <label>Top-p <input id="topP" type="number" step="0.01" value="0.97" /></label>
+        <label>Max tokens <input id="maxTokens" type="number" value="520" /></label>
+      </div>
+
+      <button id="generateBtn" type="button" onclick="window.runGenerate && window.runGenerate()">Сгенерировать проповедь</button>
+      <pre id="generateOut" class="output"></pre>
+    </section>
+
+    <section class="card small">
+      <h2>Состояние сервиса</h2>
+      <button id="healthBtn" type="button" onclick="window.runHealth && window.runHealth()">Проверить</button>
+      <pre id="healthOut" class="output"></pre>
+      <p class="note">Важно: вывод сервиса является черновым и требует богословской проверки.</p>
+    </section>
+  </main>
+
+  <script src="/static/app.js?v=20260328-4"></script>
+</body>
+</html>

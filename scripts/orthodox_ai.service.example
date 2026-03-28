@@ -1,0 +1,17 @@
+[Unit]
+Description=Orthodox AI FastAPI Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ortodox_ai
+Environment=BASE_MODEL_NAME=ai-forever/rugpt3small_based_on_gpt2
+Environment=LORA_ADAPTER_PATH=/home/ubuntu/ortodox_ai/outputs/lora-orthodox-gpt2
+Environment=APP_ENV=prod
+ExecStart=/home/ubuntu/ortodox_ai/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
