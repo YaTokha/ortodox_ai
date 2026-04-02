@@ -20,12 +20,16 @@ class SermonGenerator:
         self.device = "cpu"
         self.model_name = settings.base_model_name
         self.adapter_loaded = False
+        self._load_attempted = False
 
     def load(self) -> None:
         if self.settings.disable_model:
             return
         if self.model is not None and self.tokenizer is not None:
             return
+        if self._load_attempted:
+            return
+        self._load_attempted = True
 
         try:
             import torch
@@ -38,11 +42,20 @@ class SermonGenerator:
         use_cuda = self.settings.use_gpu_if_available and torch.cuda.is_available()
         device = "cuda" if use_cuda else "cpu"
 
-        tokenizer = AutoTokenizer.from_pretrained(self.settings.base_model_name)
+        # Сначала пробуем локальный кэш (без сети). Это ускоряет старт и защищает от DNS-сбоев.
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(self.settings.base_model_name, local_files_only=True)
+            local_hit = True
+        except Exception:
+            tokenizer = AutoTokenizer.from_pretrained(self.settings.base_model_name)
+            local_hit = False
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        base_model = AutoModelForCausalLM.from_pretrained(self.settings.base_model_name)
+        if local_hit:
+            base_model = AutoModelForCausalLM.from_pretrained(self.settings.base_model_name, local_files_only=True)
+        else:
+            base_model = AutoModelForCausalLM.from_pretrained(self.settings.base_model_name)
 
         if self.settings.lora_adapter_path:
             base_model = PeftModel.from_pretrained(base_model, self.settings.lora_adapter_path)
@@ -101,13 +114,17 @@ class SermonGenerator:
         allowed_new_tokens = max(32, min(max_new_tokens, model_ctx - input_len - 1))
 
         with torch.no_grad():
+            top_k = 70 if temperature <= 0.72 else 90
             out = self.model.generate(
                 **inputs,
                 max_new_tokens=allowed_new_tokens,
                 do_sample=True,
                 temperature=temperature,
                 top_p=top_p,
+                top_k=top_k,
                 repetition_penalty=repetition_penalty,
+                no_repeat_ngram_size=4,
+                renormalize_logits=True,
                 pad_token_id=self.tokenizer.eos_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
             )

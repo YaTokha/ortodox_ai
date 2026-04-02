@@ -17,6 +17,27 @@ def test_health() -> None:
     assert data["status"] == "ok"
 
 
+def test_health_human() -> None:
+    res = client.get("/api/health/human")
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data.get("service_status"), str) and data["service_status"]
+    assert isinstance(data.get("generation_status"), str) and data["generation_status"]
+    assert isinstance(data.get("model_name"), str) and data["model_name"]
+    assert "uptime_human" in data
+
+
+def test_calendar_day() -> None:
+    res = client.get("/api/calendar/day", params={"day": "2026-03-30"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["date_iso"] == "2026-03-30"
+    assert isinstance(data.get("topic_of_day"), str) and len(data["topic_of_day"]) > 0
+    assert isinstance(data.get("feasts"), list)
+    assert isinstance(data.get("saints"), list)
+    assert "source" in data
+
+
 def test_generate() -> None:
     payload = {
         "topic": "Покаяние",
@@ -26,6 +47,8 @@ def test_generate() -> None:
     }
     res = client.post("/api/generate", json=payload)
     assert res.status_code == 200
+    assert isinstance(res.headers.get("x-request-id"), str)
+    assert isinstance(res.headers.get("x-process-time-ms"), str)
     data = res.json()
     assert "sermon" in data
     assert "outline" in data

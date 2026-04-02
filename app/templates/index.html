@@ -4,42 +4,232 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Православный Интеллектуальный Ассистент</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260328-4" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=PT+Serif:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=20260402-orthodox-ui-26" />
 </head>
 <body>
   <header class="hero">
-    <h1>Православный Интеллектуальный Ассистент</h1>
-    <p>Генерация православных проповедей на основе корпуса Священного Писания и святоотеческой традиции (прототип ВКР)</p>
+    <div class="hero-overlay"></div>
+    <div class="hero-content">
+      <div class="hero-kicker">Во Славу Божию</div>
+      <h1>Православный Интеллектуальный Ассистент</h1>
+      <p class="hero-lead">Генерация православных проповедей на основе Священного Писания, святоотеческих толкований и церковной проповеднической традиции</p>
+
+      <div class="sacred-row" aria-hidden="true">
+        <figure class="icon-panel">
+          <div class="icon-frame">
+            <img
+              src="/static/images/kazan-icon.jpg"
+              alt="Казанская икона Божией Матери"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
+          </div>
+          <figcaption>Казанская икона Божией Матери</figcaption>
+        </figure>
+
+        <div class="cross-center">
+          <div class="cross-image-frame">
+            <img
+              src="/static/images/crucifixion-icon.jpg"
+              alt="Икона Распятия Христова"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
+          </div>
+        </div>
+
+        <figure class="icon-panel">
+          <div class="icon-frame">
+            <img
+              src="/static/images/christ-icon.jpg"
+              alt="Икона Христа Пантократора"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
+          </div>
+          <figcaption>Икона Христа Спасителя</figcaption>
+        </figure>
+      </div>
+    </div>
   </header>
 
   <main class="container">
     <section class="card wide">
       <h2>Генерация проповеди</h2>
+
+      <div class="tool-block">
+        <h3>Быстрые темы</h3>
+        <div class="chips" id="quickTopics">
+          <button type="button" class="chip quick-topic" data-prompt="Подготовь проповедь о покаянии для приходской аудитории.">Покаяние</button>
+          <button type="button" class="chip quick-topic" data-prompt="Подготовь проповедь о Воскресении Христовом и пасхальной радости.">Пасха</button>
+          <button type="button" class="chip quick-topic" data-prompt="Подготовь проповедь о Пресвятой Богородице и христианском смирении.">Богородица</button>
+          <button type="button" class="chip quick-topic" data-prompt="Подготовь проповедь о Лазаревой субботе и надежде на воскресение.">Лазарева суббота</button>
+          <button type="button" class="chip quick-topic" data-prompt="Подготовь проповедь о Таинстве Венчания и ответственности супругов перед Богом.">Венчание</button>
+          <button type="button" class="chip quick-topic" data-prompt="Подготовь строгую проповедь о грехе осуждения и покаянии.">Грех осуждения</button>
+        </div>
+      </div>
+
+      <div class="tool-block">
+        <h3>Шаблон проповеди</h3>
+        <div class="chips" id="templateChips">
+          <button type="button" class="chip template-chip active" data-template="short">Краткая</button>
+          <button type="button" class="chip template-chip" data-template="normal">Обычная</button>
+          <button type="button" class="chip template-chip" data-template="festive">Праздничная</button>
+          <button type="button" class="chip template-chip" data-template="strict_sin">Строгая о грехе</button>
+        </div>
+      </div>
+
       <textarea id="prompt" placeholder="Промт для генерации (приоритетный режим). Пример: Подготовь проповедь о покаянии для молодежной аудитории на основе Лк. 15:11-32."></textarea>
       <p class="note">Если поле «Промт для генерации» заполнено, генерация выполняется по нему.</p>
+      <div class="quick-select-grid">
+        <label>Быстрый выбор темы
+          <select id="topicPreset">
+            <option value="">Выберите тему...</option>
+            <option value="Покаяние">Покаяние</option>
+            <option value="Воскресение Христово">Воскресение Христово</option>
+            <option value="Пресвятая Богородица">Пресвятая Богородица</option>
+            <option value="Лазарева суббота">Лазарева суббота</option>
+            <option value="Таинство Венчания">Таинство Венчания</option>
+            <option value="Грех осуждения">Грех осуждения</option>
+            <option value="Грех гадания">Грех гадания</option>
+            <option value="День Святой Троицы">День Святой Троицы</option>
+          </select>
+        </label>
+        <label>Быстрый выбор праздника/повода
+          <select id="occasionPreset">
+            <option value="">Выберите повод...</option>
+            <option value="Воскресная литургия">Воскресная литургия</option>
+            <option value="Великий пост">Великий пост</option>
+            <option value="Лазарева суббота">Лазарева суббота</option>
+            <option value="Вербное воскресенье">Вербное воскресенье</option>
+            <option value="Пасха Христова">Пасха Христова</option>
+            <option value="Рождество Христово">Рождество Христово</option>
+            <option value="Крещение Господне">Крещение Господне</option>
+            <option value="День Святой Троицы">День Святой Троицы</option>
+            <option value="Память святого">Память святого</option>
+          </select>
+        </label>
+        <label>Быстрый выбор аудитории
+          <select id="audiencePreset">
+            <option value="">Выберите аудиторию...</option>
+            <option value="приход">Приход</option>
+            <option value="молодежь">Молодежь</option>
+            <option value="семьи">Семьи</option>
+            <option value="новоначальные">Новоначальные</option>
+            <option value="дети и подростки">Дети и подростки</option>
+            <option value="пожилые прихожане">Пожилые прихожане</option>
+            <option value="смешанная приходская аудитория">Смешанная приходская аудитория</option>
+          </select>
+        </label>
+      </div>
       <input id="topic" type="text" placeholder="Тема проповеди" />
       <input id="occasion" type="text" placeholder="Праздник / повод (необязательно)" />
       <input id="audience" type="text" value="приход" placeholder="Аудитория" />
       <textarea id="bibleText" placeholder="Библейский фрагмент (необязательно)"></textarea>
 
-      <div class="row">
-        <label>Temperature <input id="temperature" type="number" step="0.01" value="0.95" /></label>
-        <label>Top-p <input id="topP" type="number" step="0.01" value="0.97" /></label>
-        <label>Max tokens <input id="maxTokens" type="number" value="520" /></label>
+      <div class="actions-row">
+        <button id="generateBtn" type="button">Сгенерировать проповедь</button>
+        <label class="compare-toggle">
+          <input id="compareMode" type="checkbox" />
+          Сравнить 2 варианта
+        </label>
+      </div>
+      <p id="generationStatus" class="status-line" aria-live="polite"></p>
+      <p id="validationMsg" class="validation-msg" aria-live="polite"></p>
+
+      <div class="result-tools">
+        <div class="result-actions">
+          <button id="copyBtn" type="button">Скопировать</button>
+          <button id="txtBtn" type="button">Скачать .txt</button>
+          <button id="docxBtn" type="button">Скачать .docx</button>
+          <button id="printBtn" type="button">Печать</button>
+        </div>
+        <div class="readability-controls">
+          <label>Шрифт
+            <input id="fontSizeRange" type="range" min="15" max="28" value="18" />
+          </label>
+          <label>Интервал
+            <input id="lineHeightRange" type="range" min="14" max="24" value="17" />
+          </label>
+          <button id="readingModeBtn" type="button">Режим чтения</button>
+          <button id="fullscreenBtn" type="button">Во весь экран</button>
+        </div>
       </div>
 
-      <button id="generateBtn" type="button" onclick="window.runGenerate && window.runGenerate()">Сгенерировать проповедь</button>
-      <pre id="generateOut" class="output"></pre>
+      <div id="singleOutWrap">
+        <div id="generateOut" class="output sermon-output" aria-live="polite"></div>
+      </div>
+
+      <div id="compareWrap" class="compare-wrap hidden">
+        <div class="compare-col">
+          <h3>Вариант A</h3>
+          <div id="compareOutA" class="output sermon-output compare-output"></div>
+        </div>
+        <div class="compare-col">
+          <h3>Вариант B</h3>
+          <div id="compareOutB" class="output sermon-output compare-output"></div>
+        </div>
+      </div>
+
+      <div class="analysis-grid">
+        <div class="analysis-card">
+          <h3>Оценка качества</h3>
+          <div id="qualityOut" class="quality-box"></div>
+        </div>
+        <div class="analysis-card">
+          <h3>Пастырский чек-лист</h3>
+          <div id="checklistOut" class="checklist-box"></div>
+        </div>
+        <div class="analysis-card hidden" id="diffBlock">
+          <h3>Различия A/B</h3>
+          <div id="diffOut" class="diff-box"></div>
+        </div>
+      </div>
+
+      <div class="sources-block">
+        <h3>Использованные источники</h3>
+        <ul id="sourcesOut" class="sources-list"></ul>
+      </div>
+
+      <div class="feedback-block">
+        <h3>Оценка результата</h3>
+        <div class="chips">
+          <button type="button" class="chip feedback-chip" data-feedback="good">Подходит</button>
+          <button type="button" class="chip feedback-chip" data-feedback="too_general">Слишком общо</button>
+          <button type="button" class="chip feedback-chip" data-feedback="too_soft">Слишком мягко</button>
+          <button type="button" class="chip feedback-chip" data-feedback="need_specifics">Нужна конкретика</button>
+        </div>
+        <p id="feedbackMsg" class="note"></p>
+      </div>
     </section>
 
-    <section class="card small">
+    <section class="card small sidebar-card">
+      <h2>Сегодня в календаре</h2>
+      <div id="calendarInfo" class="calendar-box"></div>
+      <div class="calendar-actions">
+        <button id="calendarUseBtn" type="button">Сгенерировать проповедь на сегодня</button>
+        <button id="calendarRefreshBtn" type="button">Обновить календарь</button>
+      </div>
+    </section>
+
+    <section class="card small sidebar-card">
+      <h2>История генераций</h2>
+      <ul id="historyList" class="history-list"></ul>
+      <button id="clearHistoryBtn" type="button">Очистить историю</button>
+    </section>
+
+    <section class="card small sidebar-card">
       <h2>Состояние сервиса</h2>
-      <button id="healthBtn" type="button" onclick="window.runHealth && window.runHealth()">Проверить</button>
-      <pre id="healthOut" class="output"></pre>
+      <button id="healthBtn" type="button">Проверить</button>
+      <div id="healthOut" class="health-box"></div>
       <p class="note">Важно: вывод сервиса является черновым и требует богословской проверки.</p>
     </section>
   </main>
 
-  <script src="/static/app.js?v=20260328-4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="/static/app.js?v=20260402-orthodox-ui-26"></script>
 </body>
 </html>

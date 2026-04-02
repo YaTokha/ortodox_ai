@@ -33,6 +33,7 @@ class GenerateRequest(BaseModel):
     occasion: Optional[str] = Field(default=None, max_length=200)
     audience: Optional[str] = Field(default="приход", max_length=200)
     style: str = Field(default="пастырский", max_length=100)
+    variant_tag: Optional[str] = Field(default=None, max_length=8)
 
     max_new_tokens: int = Field(default=520, ge=120, le=900)
     temperature: float = Field(default=0.78, ge=0.1, le=1.5)
@@ -49,11 +50,22 @@ class GenerateRequest(BaseModel):
         return self
 
 
+class QualityMetrics(BaseModel):
+    overall_score: float
+    topic_relevance: float
+    structure_score: float
+    substance_score: float
+    diversity_score: float
+    repetition_control_score: float
+    notes: List[str] = Field(default_factory=list)
+
+
 class GenerateResponse(BaseModel):
     sermon: str
     outline: List[str]
     citations: List[Citation]
     model_name: str
+    quality: QualityMetrics
     disclaimer: str
 
 
@@ -62,3 +74,25 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     base_model_name: str
     adapter_loaded: bool
+
+
+class HumanHealthResponse(BaseModel):
+    service_status: str
+    generation_status: str
+    model_name: str
+    model_loaded: bool
+    adapter_loaded: bool
+    rate_limit_note: str
+    uptime_seconds: int
+    uptime_human: str
+
+
+class CalendarDayResponse(BaseModel):
+    date_iso: str
+    date_ru: str
+    topic_of_day: str
+    main_feast: Optional[str] = None
+    feasts: List[str] = Field(default_factory=list)
+    saints: List[str] = Field(default_factory=list)
+    fasting: Optional[str] = None
+    source: str
