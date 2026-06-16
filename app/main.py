@@ -397,10 +397,12 @@ async def generate(request: Request, req: GenerateRequest) -> GenerateResponse:
         extra={"request_id": request_id},
     )
     cache_key = _make_generate_cache_key(req)
-    cached = await _get_cached_generate(cache_key)
-    if cached is not None:
-        logger.info("generate_cache_hit client=%s", client_key, extra={"request_id": request_id})
-        return GenerateResponse(**cached)
+    use_cache = bool(settings.enable_generate_cache)
+    if use_cache:
+        cached = await _get_cached_generate(cache_key)
+        if cached is not None:
+            logger.info("generate_cache_hit client=%s", client_key, extra={"request_id": request_id})
+            return GenerateResponse(**cached)
 
     inflight, is_owner = await _acquire_generate_inflight(cache_key)
     if not is_owner:
@@ -416,7 +418,8 @@ async def generate(request: Request, req: GenerateRequest) -> GenerateResponse:
     try:
         generated = await asyncio.to_thread(assistant.generate_sermon, req)
         payload = generated.model_dump(mode="json")
-        await _set_cached_generate(cache_key, payload)
+        if use_cache:
+            await _set_cached_generate(cache_key, payload)
         inflight.set_result(payload)
         return generated
     except Exception as exc:

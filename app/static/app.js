@@ -357,6 +357,13 @@ function buildPayload() {
   const bibleTextEl = byId("bibleText");
 
   const cfg = getTemplateConfig(selectedTemplate);
+  const rand = () => (Math.random() - 0.5);
+  // Уникальный тег варианта для одиночной генерации:
+  // избегаем жесткой детерминированности веток A/B/C при повторных запросах.
+  const autoVariant = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(-8);
+  const temperature = clamp(0.78 + rand() * 0.14, 0.62, 0.98);
+  const topP = clamp(0.92 + rand() * 0.06, 0.86, 0.98);
+  const repetitionPenalty = clamp(1.12 + Math.random() * 0.1, 1.08, 1.24);
 
   const rawPrompt = (promptEl?.value || "").trim();
   const finalPrompt = rawPrompt;
@@ -368,8 +375,11 @@ function buildPayload() {
     audience: (audienceEl?.value || "").trim() || "приход",
     bible_text: (bibleTextEl?.value || "").trim() || null,
     style: cfg.style,
-    variant_tag: null,
+    variant_tag: autoVariant,
     max_new_tokens: cfg.max_new_tokens,
+    temperature: Number(temperature.toFixed(3)),
+    top_p: Number(topP.toFixed(3)),
+    repetition_penalty: Number(repetitionPenalty.toFixed(3)),
   };
 }
 

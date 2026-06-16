@@ -1,6 +1,7 @@
 import re
 import hashlib
 import random
+import unicodedata
 from html import unescape
 from typing import Dict, List, Optional, Tuple
 
@@ -8,6 +9,7 @@ from app.config import Settings
 from app.schemas import AnalyzeRequest, AnalyzeResponse, Citation, GenerateRequest, GenerateResponse, QualityMetrics
 from app.services.generation import SermonGenerator
 from app.services.retrieval import CorpusRetrievalService
+from app.services.saint_life_service import SaintLifeService
 from app.services.text_preprocessor import TextPreprocessor
 
 DISCLAIMER = (
@@ -30,6 +32,7 @@ class OrthodoxAssistantService:
         self.preprocessor = TextPreprocessor()
         self.retrieval = CorpusRetrievalService(settings.corpus_abspath())
         self.generator = SermonGenerator(settings)
+        self.saint_life = SaintLifeService()
         self._recent_sermon_signatures: List[str] = []
         self._recent_sermons: List[str] = []
         self._recent_choice_index: Dict[str, int] = {}
@@ -1266,6 +1269,9 @@ class OrthodoxAssistantService:
             for w in [
                 "свят",
                 "свт.",
+                "прп.",
+                "прп ",
+                "прп",
                 "преп",
                 "мучен",
                 "блаженн",
@@ -1275,6 +1281,315 @@ class OrthodoxAssistantService:
                 "чудотвор",
             ]
         )
+
+    def _strip_diacritics(self, text: str) -> str:
+        if not text:
+            return ""
+        # Удаляем только ударения (acute/grave), сохраняя буквы вроде "й".
+        normalized = unicodedata.normalize("NFD", text)
+        normalized = normalized.replace("\u0301", "").replace("\u0300", "")
+        return unicodedata.normalize("NFC", normalized)
+
+    def _extract_saint_core_name(self, topic: str) -> str:
+        raw = self._strip_diacritics(self.preprocessor.normalize(topic or ""))
+        if not raw:
+            return ""
+        text = re.sub(r"\([^)]*\)", " ", raw)
+        text = re.sub(r"[«»\"'`]", " ", text)
+        text = re.sub(
+            r"\b(проповед\w*|на\s+тему|памят\w*|свят\w*|дня|о|об|про|подготов\w*|сгенерир\w*|напиш\w*)\b",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\b(свт|прп|блж|мч|сщмч|праведн\w*|преподобн\w*|священномученик\w*|"
+            r"святител\w*|апостол\w*|равноапостол\w*|исповедник\w*|чудотвор\w*)\.?\b",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"\s+", " ", text).strip(" .,:;!?-")
+        if not text:
+            return ""
+        tokens = re.findall(r"[А-ЯЁ][а-яё-]+", text)
+        if not tokens:
+            return ""
+        # Для вида "Иаков Катанский (Сицилийский)" берём первые 2 токена.
+        # Для однословного имени оставляем один токен.
+        if len(tokens) >= 2:
+            return " ".join(tokens[:2])
+        return tokens[0]
+
+    def _saint_name_genitive(self, topic: str) -> str:
+        core = self._extract_saint_core_name(topic)
+        if not core:
+            return ""
+        return self._normalize_author_attribution(core)
+
+    def _saint_invocation_phrase(self, req: GenerateRequest) -> str:
+        topic_low = self._extract_topic(req).lower()
+        if not self._is_saint_topic(topic_low):
+            return ""
+        saint_gen = self._saint_name_genitive(self._extract_topic(req))
+        if saint_gen:
+            return f"Молитвами {saint_gen}, Господи Иисусе Христе, помилуй нас грешных."
+        return "Молитвами святых угодников Божиих, Господи Иисусе Христе, помилуй нас грешных."
+
+    def _saint_hint_from_topic(self, topic: str) -> str:
+        raw = self.preprocessor.normalize(topic or "")
+        if not raw:
+            return ""
+        m = re.search(r"\(([^)]+)\)", raw)
+        if m:
+            return self.preprocessor.normalize(m.group(1))
+        return ""
+
+    def _to_feminine_instrumental_adjective(self, token: str) -> str:
+        word = self.preprocessor.normalize(token)
+        low = word.lower()
+        if low.endswith("ский"):
+            return word[:-4] + "ской"
+        if low.endswith("цкий"):
+            return word[:-4] + "цкой"
+        if low.endswith("ой"):
+            return word[:-2] + "ой"
+        if low.endswith("ый"):
+            return word[:-2] + "ой"
+        if low.endswith("ий"):
+            return word[:-2] + "ей"
+        return word
+
+    def _build_saint_brief_life_paragraph(self, req: GenerateRequest, citations: List[Citation]) -> str:
+        topic = self._extract_topic(req)
+        topic_low = topic.lower()
+        if not self._is_saint_topic(topic_low):
+            return ""
+        internet_life = self.saint_life.fetch_brief_life(topic)
+        if internet_life:
+            return f"Краткое житие святого: {internet_life}"
+        saint_gen = self._saint_name_genitive(topic)
+        saint_display = self._extract_saint_core_name(topic) or topic
+        core_markers = [w for w in re.findall(r"[а-яё]{4,}", self._extract_saint_core_name(topic).lower()) if w]
+        fact_markers = [
+            "родил",
+            "жил",
+            "подвиз",
+            "служил",
+            "епископ",
+            "пресвитер",
+            "монастыр",
+            "чуд",
+            "исповед",
+            "страдан",
+            "ученик",
+            "настав",
+            "пост",
+            "молитв",
+            "скончал",
+            "почил",
+            "обитель",
+            "памят",
+            "прослав",
+            "канон",
+        ]
+        life_markers = [
+            "жити",
+            "подвиг",
+            "молитв",
+            "пост",
+            "обитель",
+            "монастыр",
+            "служен",
+            "верност",
+        ]
+        common_noise = [
+            "правило",
+            "источник:",
+            "http://",
+            "https://",
+            ".zip",
+            "royallib",
+            "комментар",
+            "толкован",
+        ]
+
+        scored_facts: List[Tuple[int, str]] = []
+        seen = set()
+        for item in citations:
+            text = self.preprocessor.normalize(item.excerpt or "")
+            if not text:
+                continue
+            meta = self.preprocessor.normalize(f"{item.author or ''} {item.title or ''} {item.reference or ''}").lower()
+            meta_has_core = bool(core_markers) and any(cm in meta for cm in core_markers)
+            meta_hagi = any(m in meta for m in ["жити", "память", "преподоб", "свят", "подвиг"])
+            for sent in self.preprocessor.split_into_sentences(text):
+                s = self.preprocessor.normalize(sent)
+                if not s:
+                    continue
+                low = s.lower()
+                if any(x in low for x in common_noise):
+                    continue
+                sent_has_core = any(cm in low for cm in core_markers) if core_markers else True
+                if core_markers and not (sent_has_core or meta_has_core):
+                    continue
+                has_fact = any(m in low for m in fact_markers)
+                has_life = any(m in low for m in life_markers)
+                if not (has_fact or (meta_hagi and has_life)):
+                    continue
+                if len(re.findall(r"[А-Яа-яA-Za-zЁё]+", s)) < 8:
+                    continue
+                if len(re.findall(r"[А-Яа-яA-Za-zЁё]+", s)) > 42:
+                    continue
+                if s.count(",") >= 5 or s.count(";") >= 2:
+                    continue
+                key = self._sentence_key(s)
+                if key in seen:
+                    continue
+                seen.add(key)
+                score = sum(1 for m in fact_markers if m in low)
+                score += sum(1 for m in life_markers if m in low)
+                if re.search(r"\b\d{3,4}\b", low):
+                    score += 2
+                if any(w in low for w in ["город", "земл", "обитель", "монастыр", "епископ", "сицили"]):
+                    score += 1
+                scored_facts.append((score, s))
+
+        if scored_facts:
+            scored_facts.sort(key=lambda x: x[0], reverse=True)
+            facts = [line for _, line in scored_facts[:3]]
+            joined = " ".join(f if f.endswith((".", "!", "?")) else f + "." for f in facts)
+            return f"Краткое житие святого: {joined}"
+
+        hint = self._saint_hint_from_topic(topic)
+        if hint:
+            hint_low = hint.lower()
+            if hint_low.endswith(("ский", "цкий", "ой", "ый", "ий")):
+                place = self._to_feminine_instrumental_adjective(hint)
+                hint_line = f"Церковная память связывает подвиг святого с {place} землей."
+            else:
+                hint_line = f"Церковная память связывает подвиг святого с местом: {hint}."
+        else:
+            hint_line = "Святой жил в постоянном молитвенном делании и нес подвиг верности Христу."
+        return (
+            "Краткое житие святого: "
+            f"{saint_display} почитается Церковью как подвижник веры, молитвы и духовного трезвения. "
+            f"В церковном предании подчеркиваются подвиги {saint_gen or saint_display}, верность Христу и милосердие к людям. "
+            f"{hint_line} "
+            f"Житийный пример {saint_gen or saint_display} призывает нас к покаянию, терпению и деятельной любви."
+        )
+
+    def _build_saint_life_paragraphs(self, req: GenerateRequest, citations: List[Citation], count: int = 2) -> List[str]:
+        topic = self._extract_topic(req)
+        topic_low = topic.lower()
+        if not self._is_saint_topic(topic_low):
+            return []
+
+        saint_gen = self._saint_name_genitive(topic)
+        markers = self._topic_markers(topic) + self._topic_specific_keywords(topic)
+        core_name = self._extract_saint_core_name(topic).lower()
+        core_markers = [w for w in re.findall(r"[а-яё]{4,}", core_name) if w not in {"свят", "дня"}]
+        markers.extend(core_markers)
+        markers = list(dict.fromkeys(markers))
+
+        candidates: List[str] = []
+        seen = set()
+        hagi_markers = ["жити", "подвиг", "молитв", "пост", "монастыр", "чуд", "исповед", "епископ", "служен", "терпен"]
+        fact_markers = [
+            "родил",
+            "жил",
+            "подвиз",
+            "служил",
+            "епископ",
+            "пресвитер",
+            "монастыр",
+            "чуд",
+            "исповед",
+            "страдан",
+            "ученик",
+            "настав",
+        ]
+        for item in citations:
+            excerpt = self.preprocessor.normalize(item.excerpt or "")
+            if not excerpt:
+                continue
+            meta = self.preprocessor.normalize(f"{item.author or ''} {item.title or ''} {item.reference or ''}").lower()
+            meta_has_core = bool(core_markers) and any(cm in meta for cm in core_markers)
+            meta_hagiographic = any(m in meta for m in ["жити", "подвиг", "преподоб", "свят", "память"])
+            for sent in self.preprocessor.split_into_sentences(excerpt):
+                s = self.preprocessor.normalize(sent)
+                if not s:
+                    continue
+                low = s.lower()
+                if any(x in low for x in ["http://", "https://", ".zip", "royallib"]):
+                    continue
+                words = re.findall(r"[А-Яа-яA-Za-zЁё]+", s)
+                if len(words) < 8 or len(words) > 40:
+                    continue
+                if s.count(",") >= 5 or s.count(";") >= 2:
+                    continue
+                # Для житийного блока берем только предложения, где есть хотя бы один маркер
+                # конкретного святого (имя/прозвание), иначе получаем чужие жития.
+                sent_has_core = any(cm in low for cm in core_markers) if core_markers else True
+                if core_markers and not (sent_has_core or meta_has_core):
+                    continue
+                has_marker = any(m in low for m in markers) or any(m in low for m in hagi_markers)
+                has_fact = any(m in low for m in fact_markers)
+                # Если метаданные явно про житие нужного святого, допускаем более мягкий порог.
+                if meta_hagiographic and (sent_has_core or meta_has_core):
+                    has_fact = has_fact or any(v in low for v in ["был", "стал", "принял", "совершал", "перенес", "явил"])
+                if not has_marker or not has_fact:
+                    continue
+                key = self._sentence_key(s)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(s)
+
+        out: List[str] = []
+        if candidates:
+            # Сначала предпочитаем более "житийные" факты, затем вращаем для вариативности.
+            def _score(line: str) -> int:
+                low = line.lower()
+                score = sum(1 for m in fact_markers if m in low)
+                score += sum(1 for m in hagi_markers if m in low)
+                if re.search(r"\b\d{3,4}\b", low):
+                    score += 1
+                return score
+
+            candidates = sorted(candidates, key=_score, reverse=True)
+            start = self._pick_nonrepeating_index(f"saint_life|{topic_low}", len(candidates))
+            rotated = candidates[start:] + candidates[:start]
+            selected = rotated[: max(1, min(count, len(rotated)))]
+            for i, sent in enumerate(selected):
+                if sent[-1] not in ".!?":
+                    sent += "."
+                if saint_gen:
+                    prefixes = [
+                        f"Из жития {saint_gen} видно: ",
+                        "В церковном предании о святом особенно важно следующее: ",
+                        f"Опыт подвига {saint_gen} свидетельствует: ",
+                    ]
+                else:
+                    prefixes = [
+                        "Из жития святого видно: ",
+                        "В церковном предании о святом особенно важно следующее: ",
+                        "Опыт подвига святого свидетельствует: ",
+                    ]
+                prefix = prefixes[i % len(prefixes)]
+                out.append(prefix + sent)
+            return self._dedupe_paragraphs(out)
+
+        saint_label = saint_gen or "святого угодника Божия"
+        fallback = [
+            f"Из жития {saint_label} видно, что святой возрастал в постоянной молитве, посте и терпении, не ища человеческой славы, но исполняя волю Божию в повседневности.",
+            f"В церковном предании о {saint_label} особенно поучительно, как святой соединял строгость к себе с любовью к ближним и становился живым свидетелем Евангелия.",
+            f"Подвиг {saint_label} показывает, что путь святости строится на верности в малом: хранении совести, кротости сердца и делах милосердия.",
+            f"Из жития {saint_label} Церковь учит нас: духовная зрелость рождается из длительного труда над собой, а не из кратких вдохновений.",
+        ]
+        start = self._pick_nonrepeating_index(f"saint_life_fallback|{topic_low}", len(fallback))
+        rotated = fallback[start:] + fallback[:start]
+        return rotated[: max(1, min(count, len(rotated)))]
 
     def _is_marriage_topic_low(self, topic_low: str) -> bool:
         low = (topic_low or "").lower()
@@ -1368,6 +1683,145 @@ class OrthodoxAssistantService:
             )
         return sermon
 
+    def _ensure_saint_conclusion_invocation(self, sermon: str, req: GenerateRequest) -> str:
+        topic_low = self._extract_topic(req).lower()
+        if not self._is_saint_topic(topic_low):
+            return sermon
+        intro, main, concl = self._split_sermon_sections(sermon)
+        if not concl:
+            return sermon
+        phrase = self._saint_invocation_phrase(req)
+        if not phrase:
+            return sermon
+        concl_low = concl.lower()
+        if "господи иисусе христе, помилуй нас грешных" in concl_low:
+            return sermon
+        concl = concl.rstrip()
+        if concl and concl[-1] not in ".!?":
+            concl += "."
+        concl = f"{concl} {phrase}".strip()
+        return self._rebuild_sermon(req, intro, main, concl)
+
+    def _ensure_saint_hagiography(self, sermon: str, req: GenerateRequest, citations: List[Citation]) -> str:
+        topic_low = self._extract_topic(req).lower()
+        if not self._is_saint_topic(topic_low):
+            return sermon
+        intro, main, concl = self._split_sermon_sections(sermon)
+        if not (intro and main and concl):
+            return sermon
+        main_parts = [p.strip() for p in main.split("\n\n") if p.strip()]
+        brief_life = self._build_saint_brief_life_paragraph(req, citations)
+        if brief_life:
+            brief_key = self._sentence_key(brief_life)[:220]
+            fact_markers = (
+                "жил",
+                "подвиз",
+                "служил",
+                "епископ",
+                "обитель",
+                "монастыр",
+                "память",
+                "прослав",
+                "страдан",
+                "чуд",
+            )
+            def _is_good_brief_life(paragraph: str) -> bool:
+                low = self.preprocessor.normalize(paragraph).lower()
+                if not low.startswith("краткое житие святого:"):
+                    return False
+                if sum(1 for m in fact_markers if m in low) < 2:
+                    return False
+                return len(re.findall(r"[.!?]", paragraph)) >= 2
+
+            present = any(self._sentence_key(p)[:220] == brief_key for p in main_parts)
+            existing_brief_idx = next(
+                (i for i, p in enumerate(main_parts) if p.lower().startswith("краткое житие святого:")),
+                None,
+            )
+            if existing_brief_idx is not None and not _is_good_brief_life(main_parts[existing_brief_idx]):
+                main_parts[existing_brief_idx] = brief_life
+            elif existing_brief_idx is None and not present:
+                main_parts.insert(min(2, len(main_parts)), brief_life)
+        core_name = self._extract_saint_core_name(self._extract_topic(req)).lower()
+        core_markers = [w for w in re.findall(r"[а-яё]{4,}", core_name) if w]
+        life_markers = ("жити", "подвиг", "в жизни свят", "в предании о", "церковном предании")
+
+        # Удаляем явно нерелевантные "житийные" фрагменты (про других святых),
+        # чтобы в итоге оставалось житие именно запрошенного святого.
+        filtered_parts: List[str] = []
+        for paragraph in main_parts:
+            low = self.preprocessor.normalize(paragraph).lower()
+            has_life_marker = any(m in low for m in life_markers)
+            if has_life_marker and core_markers and not any(cm in low for cm in core_markers):
+                if "житие святого" not in low and "в жизни святого" not in low:
+                    continue
+            filtered_parts.append(paragraph)
+        main_parts = filtered_parts
+
+        def is_relevant_life_paragraph(paragraph: str) -> bool:
+            low = self.preprocessor.normalize(paragraph).lower()
+            if not any(m in low for m in life_markers):
+                return False
+            if not core_markers:
+                return True
+            if any(cm in low for cm in core_markers):
+                return True
+            return ("житие святого" in low) or ("в жизни святого" in low)
+
+        def life_key(paragraph: str) -> str:
+            low = self.preprocessor.normalize(paragraph).lower()
+            low = re.sub(r"^(далее|при этом|именно поэтому|кроме того|отсюда следует|вместе с тем|наконец)\s*,\s*", "", low)
+            low = re.sub(r"^(из жития|в житии|в церковном предании о святом|в предании о|опыт подвига)[^:]{0,80}:\s*", "", low)
+            return self._sentence_key(low)[:220]
+
+        required_life_paragraphs = 2
+        current_life_count = sum(1 for p in main_parts if is_relevant_life_paragraph(p))
+        if current_life_count >= required_life_paragraphs:
+            rebuilt_main = "\n\n".join(main_parts)
+            return self._rebuild_sermon(req, intro, rebuilt_main, concl)
+
+        life_parts = self._build_saint_life_paragraphs(req, citations, count=3)
+        if not life_parts:
+            return sermon
+        existing = {self._sentence_key(p) for p in main_parts}
+        life_existing = {life_key(p) for p in main_parts if is_relevant_life_paragraph(p)}
+        inserted = 0
+        for p in life_parts:
+            if current_life_count + inserted >= required_life_paragraphs:
+                break
+            key = self._sentence_key(p)
+            lk = life_key(p)
+            if key in existing:
+                continue
+            if lk in life_existing:
+                continue
+            main_parts.insert(min(3, len(main_parts)), p)
+            existing.add(key)
+            life_existing.add(lk)
+            inserted += 1
+
+        # Даже если не удалось дотянуть до required_life_paragraphs через цитаты,
+        # докладываем безопасные житийные абзацы.
+        if current_life_count + inserted < required_life_paragraphs:
+            fallback_parts = self._build_saint_life_paragraphs(req, [], count=3)
+            for p in fallback_parts:
+                if current_life_count + inserted >= required_life_paragraphs:
+                    break
+                key = self._sentence_key(p)
+                lk = life_key(p)
+                if key in existing:
+                    continue
+                if lk in life_existing:
+                    continue
+                main_parts.insert(min(4, len(main_parts)), p)
+                existing.add(key)
+                life_existing.add(lk)
+                inserted += 1
+
+        rebuilt_main = "\n\n".join(main_parts)
+        rebuilt_main = self._dedupe_main_paragraphs_strict(rebuilt_main, req)
+        return self._rebuild_sermon(req, intro, rebuilt_main, concl)
+
     def _ensure_amen_last(self, sermon: str, req: GenerateRequest) -> str:
         intro, main, concl = self._split_sermon_sections(sermon)
         if not concl:
@@ -1376,6 +1830,9 @@ class OrthodoxAssistantService:
         # Убираем все вхождения «Аминь» внутри заключения и ставим одно в самый конец.
         clean_concl = re.sub(r"\bаминь\.?\b", " ", clean_concl, flags=re.IGNORECASE)
         clean_concl = re.sub(r"\s+", " ", clean_concl).strip()
+        clean_concl = re.sub(r"\s+([,;:.!?])", r"\1", clean_concl)
+        clean_concl = re.sub(r"\.{2,}", ".", clean_concl)
+        clean_concl = re.sub(r"([!?])\.", r"\1", clean_concl)
         if clean_concl and clean_concl[-1] not in ".!?":
             clean_concl += "."
         clean_concl = (clean_concl + " Аминь.").strip() if clean_concl else "Аминь."
@@ -2194,6 +2651,8 @@ class OrthodoxAssistantService:
         if low.endswith("ый"):
             return word[:-2] + "ого"
         if low.endswith("ий"):
+            if low.endswith(("кий", "гий", "хий")):
+                return word[:-2] + "ого"
             return word[:-2] + "его"
         return word
 
@@ -2268,6 +2727,10 @@ class OrthodoxAssistantService:
             "Златоуст Иоанн": "Иоанна Златоуста",
             "Иоанн Кронштадтский": "Иоанна Кронштадтского",
             "Феофан Затворник": "Феофана Затворника",
+            "Антоний Сурожский": "Антония Сурожского",
+            "Сурожский Антоний": "Антония Сурожского",
+            "Василий Великий": "Василия Великого",
+            "Великий Василий": "Василия Великого",
         }
         if core in exact:
             normalized = exact[core]
@@ -2298,10 +2761,10 @@ class OrthodoxAssistantService:
             return f"Священное Писание говорит: «{q}»."
         if kind == "father":
             if attr:
-                return f"{attr} наставляет: «{q}»."
+                return f"Святоотеческое наставление: «{q}» ({attr})."
             return f"Святые отцы учат: «{q}»."
         if attr:
-            return f"В проповеднической традиции звучит слово {attr}: «{q}»."
+            return f"В проповеднической традиции говорится: «{q}» ({attr})."
         return f"В проповеднической традиции звучит слово: «{q}»."
 
     def _build_quote_paragraphs(self, req: GenerateRequest, citations: List[Citation]) -> List[str]:
@@ -2469,18 +2932,45 @@ class OrthodoxAssistantService:
         if not (intro and main and concl):
             return sermon
 
+        def detect_kind(paragraph: str) -> str:
+            low = self.preprocessor.normalize(paragraph).lower()
+            if "ветхий завет" in low:
+                return "old_testament"
+            if "послание святых апостолов" in low:
+                return "apostle"
+            if "священное писание говорит" in low:
+                return "scripture"
+            if (
+                ("наставляет: «" in low and ("свт." in low or "свят" in low or "прп." in low))
+                or "святоотеческое наставление:" in low
+            ):
+                return "father"
+            if (
+                "проповеднической традиции звучит слово" in low
+                or "проповеднической традиции говорится:" in low
+                or "митрополит" in low
+                or "протоиерей" in low
+                or "священник" in low
+            ):
+                return "preacher"
+            return ""
+
         main_low = main.lower()
         has_old_testament = "ветхий завет" in main_low
-        has_scripture = "священное писание говорит" in main_low
+        has_scripture = ("священное писание говорит" in main_low) or has_old_testament
         has_apostle = "послание святых апостолов наставляет" in main_low
-        has_father = ("наставляет: «" in main_low and ("свт." in main_low or "свят" in main_low or "прп." in main_low))
+        has_father = (
+            ("наставляет: «" in main_low and ("свт." in main_low or "свят" in main_low or "прп." in main_low))
+            or ("святоотеческое наставление:" in main_low)
+        )
         has_preacher = (
             "проповеднической традиции звучит слово" in main_low
+            or "проповеднической традиции говорится:" in main_low
             or "митрополит" in main_low
             or "протоиерей" in main_low
             or "священник" in main_low
         )
-        if has_old_testament and has_scripture and has_apostle and has_father and has_preacher:
+        if has_old_testament and has_apostle and has_father and has_preacher:
             return sermon
 
         add_parts = self._build_quote_paragraphs(req, citations)
@@ -2488,13 +2978,19 @@ class OrthodoxAssistantService:
             return sermon
 
         main_parts = [p.strip() for p in main.split("\n\n") if p.strip()]
+        existing_kinds = {detect_kind(p) for p in main_parts if detect_kind(p)}
         existing_keys = {self._sentence_key(p) for p in main_parts}
         for p in add_parts:
+            p_kind = detect_kind(p)
+            if p_kind and p_kind in existing_kinds:
+                continue
             key = self._sentence_key(p)
             if key in existing_keys:
                 continue
             main_parts.append(p)
             existing_keys.add(key)
+            if p_kind:
+                existing_kinds.add(p_kind)
 
         main = "\n\n".join(main_parts)
         title = self._compose_title(req)
@@ -2546,9 +3042,55 @@ class OrthodoxAssistantService:
             "послание святых апостолов",
             "священное писание говорит",
             "в проповеднической традиции звучит слово",
+            "в проповеднической традиции говорится:",
             "наставляет: «",
+            "святоотеческое наставление:",
         ]
         return any(m in low for m in markers)
+
+    def _paragraph_token_jaccard(self, left: str, right: str) -> float:
+        a = {w for w in re.findall(r"[а-яёa-z]{4,}", self.preprocessor.normalize(left).lower())}
+        b = {w for w in re.findall(r"[а-яёa-z]{4,}", self.preprocessor.normalize(right).lower())}
+        if not a or not b:
+            return 0.0
+        inter = len(a & b)
+        union = len(a | b)
+        return float(inter / union) if union else 0.0
+
+    def _dedupe_main_paragraphs_strict(self, main: str, req: GenerateRequest) -> str:
+        paragraphs = [self.preprocessor.normalize(p) for p in main.split("\n\n") if self.preprocessor.normalize(p)]
+        if not paragraphs:
+            return main
+        out: List[str] = []
+        seen_keys = set()
+        quote_ref_seen = set()
+        topic_low = self._extract_topic(req).lower()
+        strict_threshold = 0.66 if self._is_saint_topic(topic_low) else 0.72
+
+        for paragraph in paragraphs:
+            key = self._sentence_key(paragraph)[:220]
+            if key in seen_keys:
+                continue
+            if self._is_quote_paragraph(paragraph):
+                refs = re.findall(r"\(([^\)]{3,120})\)", paragraph)
+                if refs:
+                    ref_key = self._sentence_key(";".join(refs))
+                    if ref_key in quote_ref_seen:
+                        continue
+                    quote_ref_seen.add(ref_key)
+            too_similar = False
+            for prev in out:
+                if self._sentence_overlap_ratio(paragraph, prev) >= strict_threshold:
+                    too_similar = True
+                    break
+                if self._paragraph_token_jaccard(paragraph, prev) >= strict_threshold:
+                    too_similar = True
+                    break
+            if too_similar:
+                continue
+            out.append(paragraph)
+            seen_keys.add(key)
+        return "\n\n".join(out).strip()
 
     def _rebuild_sermon(self, req: GenerateRequest, intro: str, main: str, concl: str) -> str:
         title = self._compose_title(req)
@@ -2687,8 +3229,7 @@ class OrthodoxAssistantService:
             return sermon
         main_low = self.preprocessor.normalize(main).lower()
         cliche_hits = sum(main_low.count(m) for m in CLICHE_MARKERS)
-        if self._repetition_penalty(sermon) < 3.0 and cliche_hits <= 1:
-            return sermon
+        low_repetition = self._repetition_penalty(sermon) < 3.0 and cliche_hits <= 1
         paragraphs = [p.strip() for p in main.split("\n\n") if p.strip()]
         if not paragraphs:
             return sermon
@@ -2750,7 +3291,8 @@ class OrthodoxAssistantService:
         if len(cleaned) < max(6, len(paragraphs) // 2):
             cleaned = self._dedupe_paragraphs([self.preprocessor.normalize(p) for p in paragraphs])
 
-        main = "\n\n".join(cleaned).strip()
+        main = main if low_repetition else "\n\n".join(cleaned).strip()
+        main = self._dedupe_main_paragraphs_strict(main, req)
         return self._rebuild_sermon(req=req, intro=intro, main=main, concl=concl)
 
     def _connective_prefix(self, idx: int, is_sin_topic: bool) -> str:
@@ -2775,11 +3317,21 @@ class OrthodoxAssistantService:
 
     def _add_cohesive_transitions(self, paragraphs: List[str], is_sin_topic: bool) -> List[str]:
         out: List[str] = []
+        used_prefixes = set()
+        prefixed_count = 0
+        max_prefixed = 3 if is_sin_topic else 4
         for i, p in enumerate(paragraphs):
             text = self.preprocessor.normalize(p or "")
             if not text:
                 continue
             if i == 0 or self._is_quote_paragraph(text):
+                out.append(text)
+                continue
+            if re.match(
+                r"^(Краткое житие святого:|Житие|В житии|В церковном предании|В предании о|Опыт подвига|Подвиг|В жизни святого|Из жития)\b",
+                text,
+                flags=re.IGNORECASE,
+            ) or ("из жития" in text.lower()):
                 out.append(text)
                 continue
             if re.match(
@@ -2789,7 +3341,15 @@ class OrthodoxAssistantService:
             ):
                 out.append(text)
                 continue
+            if prefixed_count >= max_prefixed:
+                out.append(text)
+                continue
             prefix = self._connective_prefix(i, is_sin_topic)
+            if prefix in used_prefixes:
+                out.append(text)
+                continue
+            used_prefixes.add(prefix)
+            prefixed_count += 1
             if text[0].islower():
                 text = text[0].upper() + text[1:]
             if prefix.endswith(":"):
@@ -3301,6 +3861,8 @@ class OrthodoxAssistantService:
         feast_sub = self._feast_subtopic(topic_low)
         event_profile = self._event_profile(topic_low)
         sin_profile = self._sin_profile(topic_low)
+        saint_gen = self._saint_name_genitive(topic)
+        saint_display = self._extract_saint_core_name(topic) or topic
         is_sin_topic = sin_profile is not None or self._is_sin_topic_low(topic_low)
         sin_name_nominative = str(sin_profile.get("title_topic", "грех и страсть")).lower() if sin_profile else "грех и страсть"
         sin_name_genitive = str(sin_profile.get("name_genitive", "греха и нераскаянной страсти")) if sin_profile else "греха и нераскаянной страсти"
@@ -3319,6 +3881,15 @@ class OrthodoxAssistantService:
                     "Через слово святых отцов Церковь вновь и вновь показывает: свобода от греха приходит через честную исповедь, смирение и терпеливый духовный труд.",
                 ],
                 salt=40,
+            )
+        elif self._is_saint_topic(topic_low):
+            fathers_line = pick(
+                [
+                    "Святоотеческая традиция напоминает: пример святых призывает нас не к внешнему восхищению, а к личному покаянному труду и верности Евангелию.",
+                    "Опыт Церкви учит, что память святого становится плодотворной тогда, когда мы подражаем его молитве, смирению и любви к ближним.",
+                    "Церковное предание показывает: святость возрастает в ежедневной верности Богу, а не в редких сильных впечатлениях.",
+                ],
+                salt=41,
             )
         if not occasion_provided:
             occasion = pick(
@@ -3474,7 +4045,7 @@ class OrthodoxAssistantService:
             )
             practice = pick(
                 [
-                    f"Будем просить у Бога, чтобы по молитвам {topic} Господь укрепил нас в вере, избавил от духовной расслабленности и научил жить по совести.",
+                    f"Будем просить у Бога, чтобы по молитвам {saint_gen or 'святого угодника Божия'} Господь укрепил нас в вере, избавил от духовной расслабленности и научил жить по совести.",
                     "Подражание святому начинается с малого: хранить молитву, не оправдывать свои страсти и учиться деятельной любви к ближнему в обычных делах дня.",
                     "Пусть память святого станет для нас не внешним почитанием, а решимостью менять жизнь: чаще исповедоваться, внимательнее относиться к слову и творить добро ради Христа.",
                 ],
@@ -3833,6 +4404,8 @@ class OrthodoxAssistantService:
             main_parts.append(scripture_transition)
         if rng.random() < 0.95:
             main_parts.append(fathers_line)
+        if self._is_saint_topic(topic_low):
+            main_parts.extend(self._build_saint_life_paragraphs(req, citations, count=2))
         main_parts.append(third_main)
         main_parts.append(fourth_main)
         if self._is_lazarus_topic(req):
@@ -4068,9 +4641,9 @@ class OrthodoxAssistantService:
         elif self._is_saint_topic(topic_low):
             conclusion = pick(
                 [
-                    f"По молитвам {topic} будем просить Господа о крепости веры, смирении сердца и мужестве жить по заповедям Христовым в каждом дне. Аминь.",
-                    f"Пусть пример {topic} научит нас постоянству в молитве, терпению в испытаниях и деятельной любви к ближнему. С этой решимостью продолжим путь ко Христу. Аминь.",
-                    f"Не ограничимся лишь словами о святости: начнем подражать примеру {topic} в покаянии, милосердии и верности церковной жизни. Да укрепит нас в этом Господь. Аминь.",
+                    f"По молитвам {saint_gen or 'святого угодника Божия'} будем просить Господа о крепости веры, смирении сердца и мужестве жить по заповедям Христовым в каждом дне. Аминь.",
+                    f"Пусть пример {saint_gen or saint_display} научит нас постоянству в молитве, терпению в испытаниях и деятельной любви к ближнему. С этой решимостью продолжим путь ко Христу. Аминь.",
+                    f"Не ограничимся лишь словами о святости: начнем подражать примеру {saint_gen or saint_display} в покаянии, милосердии и верности церковной жизни. Да укрепит нас в этом Господь. Аминь.",
                 ],
                 salt=2,
             )
@@ -4175,7 +4748,9 @@ class OrthodoxAssistantService:
         )
         sermon = self._enforce_topic_lock(sermon, req)
         sermon = self._tighten_main_repetition(sermon, req)
+        sermon = self._ensure_saint_hagiography(sermon, req, citations)
         sermon = self._ensure_paschal_conclusion(sermon, req)
+        sermon = self._ensure_saint_conclusion_invocation(sermon, req)
         sermon = self._ensure_amen_last(sermon, req)
         return sermon
 
@@ -4211,6 +4786,10 @@ class OrthodoxAssistantService:
         )
 
     def generate_sermon(self, req: GenerateRequest) -> GenerateResponse:
+        # Если фронт не передал вариант, выбираем его автоматически для лучшей вариативности.
+        if not (req.variant_tag or "").strip():
+            req = req.model_copy(update={"variant_tag": random.SystemRandom().choice(["A", "B", "C"])})
+
         topic = self.preprocessor.normalize(req.topic or "")
         user_prompt = self.preprocessor.normalize(req.prompt or "")
         bible_text = self.preprocessor.normalize(req.bible_text or "")
@@ -4219,6 +4798,8 @@ class OrthodoxAssistantService:
         retrieval_query = " ".join(
             part for part in [user_prompt, topic, bible_text, req.occasion or ""] if part
         )
+        if self._is_saint_topic((topic or "").lower()):
+            retrieval_query = f"{retrieval_query} житие {topic}".strip()
         retrieval_top_k = min(36, max(req.top_k_sources * 4, req.top_k_sources + 10))
         citations_raw = self.retrieval.search(retrieval_query, top_k=retrieval_top_k)
         citations_diverse = self._diversify_citations(citations_raw, req)
@@ -4343,23 +4924,38 @@ class OrthodoxAssistantService:
             sermon = self._enforce_topic_lock(sermon, req)
             sermon = self._tighten_main_repetition(sermon, req)
 
-        if self._is_too_similar_to_recent(sermon):
-            alt_pool = [sermon]
-            for _ in range(2):
+        if self._is_too_similar_to_recent(sermon, threshold=0.68):
+            base_sermon = sermon
+            alt_pool: List[str] = []
+            for _ in range(4):
                 alt = self._compose_safe_sermon(req, citations)
                 alt = self._ensure_quote_paragraphs(alt, req, citations)
                 alt = self._enforce_topic_lock(alt, req)
                 alt = self._tighten_main_repetition(alt, req)
+                if not alt.strip():
+                    continue
+                # Отбрасываем почти идентичные варианты.
+                if self._sentence_overlap_ratio(alt, base_sermon) >= 0.9:
+                    continue
                 alt_pool.append(alt)
-            diverse_pick = self._pick_best_candidate(alt_pool, req)
-            if diverse_pick:
-                sermon = diverse_pick
+            if alt_pool:
+                # Приоритет: сначала отличимость от предыдущего текста, затем качество.
+                alt_pool.sort(
+                    key=lambda s: (self._sentence_overlap_ratio(s, base_sermon), -self._sermon_quality_score(s, req))
+                )
+                sermon = alt_pool[0]
+                if self._is_too_similar_to_recent(sermon, threshold=0.72):
+                    diverse_pick = self._pick_best_candidate(alt_pool, req)
+                    if diverse_pick:
+                        sermon = diverse_pick
 
         sermon = self._ensure_quote_paragraphs(sermon, req, citations)
         sermon = self._enforce_topic_lock(sermon, req)
         sermon = self._tighten_main_repetition(sermon, req)
+        sermon = self._ensure_saint_hagiography(sermon, req, citations)
         sermon = self._apply_orthodox_casing(sermon)
         sermon = self._ensure_paschal_conclusion(sermon, req)
+        sermon = self._ensure_saint_conclusion_invocation(sermon, req)
         sermon = self._ensure_amen_last(sermon, req)
         self._remember_sermon(sermon)
         quality = self._build_quality_metrics(sermon, req)

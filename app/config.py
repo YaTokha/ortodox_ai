@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     use_gpu_if_available: bool = Field(default=True, alias="USE_GPU_IF_AVAILABLE")
     max_input_chars: int = Field(default=12000, alias="MAX_INPUT_CHARS")
     disable_model: bool = Field(default=False, alias="DISABLE_MODEL")
+    enable_generate_cache: bool = Field(default=False, alias="ENABLE_GENERATE_CACHE")
 
     corpus_path: str = Field(default="data/processed/corpus.jsonl", alias="CORPUS_PATH")
     top_k_retrieval: int = Field(default=4, alias="TOP_K_RETRIEVAL")
@@ -67,6 +68,7 @@ def get_settings() -> Settings:
         USE_GPU_IF_AVAILABLE=_env_bool("USE_GPU_IF_AVAILABLE", True),
         MAX_INPUT_CHARS=int(os.getenv("MAX_INPUT_CHARS", "12000")),
         DISABLE_MODEL=_env_bool("DISABLE_MODEL", False),
+        ENABLE_GENERATE_CACHE=_env_bool("ENABLE_GENERATE_CACHE", False),
         CORPUS_PATH=os.getenv("CORPUS_PATH", "data/processed/corpus.jsonl"),
         TOP_K_RETRIEVAL=int(os.getenv("TOP_K_RETRIEVAL", "4")),
     )
